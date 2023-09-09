@@ -8,6 +8,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import torch
+from torch import nn
 from docstring_inheritance import NumpyDocstringInheritanceInitMeta
 from torchinfo import ModelStatistics, summary
 
@@ -32,6 +33,15 @@ def deprecated_args(obj, *old_new_args):
 class EEGModuleMixin(metaclass=NumpyDocstringInheritanceInitMeta):
     """
     Mixin class for all EEG models in braindecode.
+
+    All modules inheriting from this class should be able to receive
+    input examples of shape ``(batch_size, n_chans, n_times)``.
+
+    Additionally, they should all possess a layer named ``final_layer``
+    that computes a linear projection from the embedding space
+    to the ``n_outputs``, i.e. typically ``torch.nn.Linear(emb_dim, self.n_outputs)``.
+    This final layer should not be followed by any other layers, except eventually
+    a reshape layer.
 
     Parameters
     ----------
@@ -184,8 +194,8 @@ class EEGModuleMixin(metaclass=NumpyDocstringInheritanceInitMeta):
                     )).shape)
             except RuntimeError as exc:
                 if str(exc).endswith(
-                    ("Output size is too small",
-                     "Kernel size can't be greater than actual input size")
+                        ("Output size is too small",
+                         "Kernel size can't be greater than actual input size")
                 ):
                     msg = (
                         "During model prediction RuntimeError was thrown showing that at some "
@@ -239,6 +249,52 @@ class EEGModuleMixin(metaclass=NumpyDocstringInheritanceInitMeta):
                 for ax in axis:
                     new_stride[ax] = 1
                 module.stride = tuple(new_stride)
+
+    def set_final_layer(self, new_layer: nn.Module) -> nn.Module:
+        '''
+        Sets a new final layer to the model and returns the old one.
+
+        Parameters
+        ----------
+        new_layer : nn.Module
+            The new final layer of the model.
+
+        Returns
+        -------
+        old_layer : nn.Module
+            The old final layer of the model.
+
+        Raises
+        ------
+        TypeError: If the model is not conform (missing final_layer).
+        '''
+        try:
+            old_layer = self.final_layer
+        except AttributeError:
+            raise TypeError(
+                "The model is not conform: missing final_layer. "
+                "See EEGModuleMixin for details."
+            )
+        self.final_layer = new_layer
+        return old_layer
+
+    def drop_final_layer(self) -> nn.Module:
+        '''
+        Removes the final layer of the model and returns this layer.
+
+        This allows exposing the embedding space of the model.
+        Under the hood, the final layer is replaced by an identity function.
+
+        Returns
+        -------
+        old_layer : nn.Module
+            The old final layer of the model.
+
+        Raises
+        ------
+        TypeError: If the model is not conform (missing final_layer).
+     '''
+        return self.set_final_layer(nn.Identity())
 
     def get_torchinfo_statistics(
             self,
